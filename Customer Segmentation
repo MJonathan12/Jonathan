@@ -1,0 +1,296 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "name": "Untitled1.ipynb",
+      "provenance": [],
+      "authorship_tag": "ABX9TyOj26YFjEX3ivSB1Y7AaYJZ",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/MJonathan12/Jonathan/blob/master/Customer%20Segmentation\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "zUpwIMvAzJCy",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# import libraries\n",
+        "from datetime import datetime, timedelta\n",
+        "import pandas as pd\n",
+        "%matplotlib inline\n",
+        "import matplotlib.pyplot as plt\n",
+        "import numpy as np\n",
+        "import seaborn as sns\n",
+        "from __future__ import division\n",
+        "\n",
+        "import plotly.plotly as py\n",
+        "import plotly.offline as pyoff\n",
+        "import plotly.graph_objs as go\n",
+        "\n",
+        "#inititate Plotly\n",
+        "pyoff.init_notebook_mode()\n",
+        "\n",
+        "#load our data from CSV\n",
+        "tx_data = pd.read_csv('data.csv')\n",
+        "\n",
+        "#convert the string date field to datetime\n",
+        "tx_data['InvoiceDate'] = pd.to_datetime(tx_data['InvoiceDate'])\n",
+        "\n",
+        "#we will be using only UK data\n",
+        "tx_uk = tx_data.query(\"Country=='United Kingdom'\").reset_index(drop=True)"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "DOSV7amHzgHo",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "#create a generic user dataframe to keep CustomerID and new segmentation scores\n",
+        "tx_user = pd.DataFrame(tx_data['CustomerID'].unique())\n",
+        "tx_user.columns = ['CustomerID']\n",
+        "\n",
+        "#get the max purchase date for each customer and create a dataframe with it\n",
+        "tx_max_purchase = tx_uk.groupby('CustomerID').InvoiceDate.max().reset_index()\n",
+        "tx_max_purchase.columns = ['CustomerID','MaxPurchaseDate']\n",
+        "\n",
+        "#we take our observation point as the max invoice date in our dataset\n",
+        "tx_max_purchase['Recency'] = (tx_max_purchase['MaxPurchaseDate'].max() - tx_max_purchase['MaxPurchaseDate']).dt.days\n",
+        "\n",
+        "#merge this dataframe to our new user dataframe\n",
+        "tx_user = pd.merge(tx_user, tx_max_purchase[['CustomerID','Recency']], on='CustomerID')\n",
+        "\n",
+        "tx_user.head()\n",
+        "\n",
+        "#plot a recency histogram\n",
+        "\n",
+        "plot_data = [\n",
+        "    go.Histogram(\n",
+        "        x=tx_user['Recency']\n",
+        "    )\n",
+        "]\n",
+        "\n",
+        "plot_layout = go.Layout(\n",
+        "        title='Recency'\n",
+        "    )\n",
+        "fig = go.Figure(data=plot_data, layout=plot_layout)\n",
+        "pyoff.iplot(fig)\n",
+        "\n"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "WTd2aJAPz2PP",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "from sklearn.cluster import KMeans\n",
+        "\n",
+        "sse={}\n",
+        "tx_recency = tx_user[['Recency']]\n",
+        "for k in range(1, 10):\n",
+        "    kmeans = KMeans(n_clusters=k, max_iter=1000).fit(tx_recency)\n",
+        "    tx_recency[\"clusters\"] = kmeans.labels_\n",
+        "    sse[k] = kmeans.inertia_ \n",
+        "plt.figure()\n",
+        "plt.plot(list(sse.keys()), list(sse.values()))\n",
+        "plt.xlabel(\"Number of cluster\")\n",
+        "plt.show()"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "LeII9o2_z5Q9",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "\n",
+        "#build 4 clusters for recency and add it to dataframe\n",
+        "kmeans = KMeans(n_clusters=4)\n",
+        "kmeans.fit(tx_user[['Recency']])\n",
+        "tx_user['RecencyCluster'] = kmeans.predict(tx_user[['Recency']])\n",
+        "\n",
+        "#function for ordering cluster numbers\n",
+        "def order_cluster(cluster_field_name, target_field_name,df,ascending):\n",
+        "    new_cluster_field_name = 'new_' + cluster_field_name\n",
+        "    df_new = df.groupby(cluster_field_name)[target_field_name].mean().reset_index()\n",
+        "    df_new = df_new.sort_values(by=target_field_name,ascending=ascending).reset_index(drop=True)\n",
+        "    df_new['index'] = df_new.index\n",
+        "    df_final = pd.merge(df,df_new[[cluster_field_name,'index']], on=cluster_field_name)\n",
+        "    df_final = df_final.drop([cluster_field_name],axis=1)\n",
+        "    df_final = df_final.rename(columns={\"index\":cluster_field_name})\n",
+        "    return df_final\n",
+        "\n",
+        "tx_user = order_cluster('RecencyCluster', 'Recency',tx_user,False)"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "4G67CJPi0jzT",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "#get order counts for each user and create a dataframe with it\n",
+        "tx_frequency = tx_uk.groupby('CustomerID').InvoiceDate.count().reset_index()\n",
+        "tx_frequency.columns = ['CustomerID','Frequency']\n",
+        "\n",
+        "#add this data to our main dataframe\n",
+        "tx_user = pd.merge(tx_user, tx_frequency, on='CustomerID')\n",
+        "\n",
+        "#plot the histogram\n",
+        "plot_data = [\n",
+        "    go.Histogram(\n",
+        "        x=tx_user.query('Frequency < 1000')['Frequency']\n",
+        "    )\n",
+        "]\n",
+        "\n",
+        "plot_layout = go.Layout(\n",
+        "        title='Frequency'\n",
+        "    )\n",
+        "fig = go.Figure(data=plot_data, layout=plot_layout)\n",
+        "pyoff.iplot(fig)"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "4XyNEiW_0pVf",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "#k-means\n",
+        "kmeans = KMeans(n_clusters=4)\n",
+        "kmeans.fit(tx_user[['Frequency']])\n",
+        "tx_user['FrequencyCluster'] = kmeans.predict(tx_user[['Frequency']])\n",
+        "\n",
+        "#order the frequency cluster\n",
+        "tx_user = order_cluster('FrequencyCluster', 'Frequency',tx_user,True)\n",
+        "\n",
+        "#see details of each cluster\n",
+        "tx_user.groupby('FrequencyCluster')['Frequency'].describe()"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "-xKFsPq30yA4",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "#calculate revenue for each customer\n",
+        "tx_uk['Revenue'] = tx_uk['UnitPrice'] * tx_uk['Quantity']\n",
+        "tx_revenue = tx_uk.groupby('CustomerID').Revenue.sum().reset_index()\n",
+        "\n",
+        "#merge it with our main dataframe\n",
+        "tx_user = pd.merge(tx_user, tx_revenue, on='CustomerID')\n",
+        "\n",
+        "#plot the histogram\n",
+        "plot_data = [\n",
+        "    go.Histogram(\n",
+        "        x=tx_user.query('Revenue < 10000')['Revenue']\n",
+        "    )\n",
+        "]\n",
+        "\n",
+        "plot_layout = go.Layout(\n",
+        "        title='Monetary Value'\n",
+        "    )\n",
+        "fig = go.Figure(data=plot_data, layout=plot_layout)\n",
+        "pyoff.iplot(fig)"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "WnG5tuQS06OO",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "\n",
+        "#apply clustering\n",
+        "kmeans = KMeans(n_clusters=4)\n",
+        "kmeans.fit(tx_user[['Revenue']])\n",
+        "tx_user['RevenueCluster'] = kmeans.predict(tx_user[['Revenue']])\n",
+        "\n",
+        "\n",
+        "#order the cluster numbers\n",
+        "tx_user = order_cluster('RevenueCluster', 'Revenue',tx_user,True)\n",
+        "\n",
+        "#show details of the dataframe\n",
+        "tx_user.groupby('RevenueCluster')['Revenue'].describe()"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "GP8Jm-M91Gxj",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "#calculate overall score and use mean() to see details\n",
+        "tx_user['OverallScore'] = tx_user['RecencyCluster'] + tx_user['FrequencyCluster'] + tx_user['RevenueCluster']\n",
+        "tx_user.groupby('OverallScore')['Recency','Frequency','Revenue'].mean()"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "KoRCCHa21uV1",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        ""
+      ],
+      "execution_count": 0,
+      "outputs": []
+    }
+  ]
+}
